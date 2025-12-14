@@ -36,6 +36,8 @@ Copyright 2007, 2008 Daniel Zerbino (zerbino@ebi.ac.uk)
 #define BLOCK_SIZE  100000
 #define LN2 1.4
 #define BACKTRACK_CUTOFF 100
+#define LAZY_NODE_FALLBACK 2000
+#define LAZY_SEED_FALLBACK 200
 
 typedef struct miniConnection_st MiniConnection;
 typedef struct lazyQueue_st LazyQueue;
@@ -1222,39 +1224,54 @@ static void destroyLazyQueue(LazyQueue *queue)
 	free(queue);
 }
 
-static boolean nodeHasConnections(Node *node)
+static boolean nodeHasPairedConnections(Node *node)
 {
-	return getConnection(node) != NULL
-	    || getConnection(getTwinNode(node)) != NULL;
+	Connection *connect;
+
+	for (connect = getConnection(node); connect != NULL;
+	     connect = getNextConnection(connect)) {
+		if (getConnectionPairedCount(connect) > 0)
+			return true;
+	}
+
+	for (connect = getConnection(getTwinNode(node)); connect != NULL;
+	     connect = getNextConnection(connect)) {
+		if (getConnectionPairedCount(connect) > 0)
+			return true;
+	}
+
+	return false;
 }
 
-static void lazyQueueSchedule(LazyQueue *queue, Node *node)
+static boolean lazyQueueSchedule(LazyQueue *queue, Node *node)
 {
 	IDnum nodeID, index;
 
 	if (queue == NULL || node == NULL)
-		return;
+		return false;
 
 	if (!getUniqueness(node))
-		return;
+		return false;
 
-	if (!nodeHasConnections(node))
-		return;
+	if (!nodeHasPairedConnections(node))
+		return false;
 
 	nodeID = getNodeID(node);
 	if (nodeID == 0)
-		return;
+		return false;
 
 	index = nodeID + nodeCount(graph);
 	if (index < 0 || index >= queue->capacity)
-		return;
+		return false;
 
 	if (queue->scheduled[index])
-		return;
+		return false;
 
 	queue->entries[queue->tail] = nodeID;
 	queue->tail = (queue->tail + 1) % queue->capacity;
 	queue->scheduled[index] = true;
+
+	return true;
 }
 
 static IDnum lazyQueuePop(LazyQueue *queue)
@@ -1277,30 +1294,28 @@ static IDnum lazyQueuePop(LazyQueue *queue)
 static void lazyQueueScheduleNeighbours(LazyQueue *queue, Node *node)
 {
 	Connection *connect;
-	Arc *arc;
 
 	lazyQueueSchedule(queue, node);
 	lazyQueueSchedule(queue, getTwinNode(node));
 
-	for (arc = getArc(node); arc != NULL; arc = getNextArc(arc)) {
-		lazyQueueSchedule(queue, getDestination(arc));
-		lazyQueueSchedule(queue, getTwinNode(getDestination(arc)));
-	}
-
 	for (connect = getConnection(node); connect != NULL;
 	     connect = getNextConnection(connect)) {
-		lazyQueueSchedule(queue,
-				  getTwinNode(getConnectionDestination(connect)));
-		lazyQueueSchedule(queue,
-				  getConnectionDestination(connect));
+		if (getConnectionPairedCount(connect) > 0) {
+			lazyQueueSchedule(queue,
+					  getConnectionDestination(connect));
+			lazyQueueSchedule(queue,
+					  getTwinNode(getConnectionDestination(connect)));
+		}
 	}
 
 	for (connect = getConnection(getTwinNode(node)); connect != NULL;
 	     connect = getNextConnection(connect)) {
-		lazyQueueSchedule(queue,
-				  getConnectionDestination(connect));
-		lazyQueueSchedule(queue,
-				  getTwinNode(getConnectionDestination(connect)));
+		if (getConnectionPairedCount(connect) > 0) {
+			lazyQueueSchedule(queue,
+					  getConnectionDestination(connect));
+			lazyQueueSchedule(queue,
+					  getTwinNode(getConnectionDestination(connect)));
+		}
 	}
 }
 
@@ -1368,6 +1383,8 @@ void lazyExploitShortReadPairs(Graph * argGraph,
 	IDnum scheduledID;
 	Node *node;
 	boolean modified;
+	IDnum seedCount = 0;
+	boolean lazyFallback = false;
 
 	graph = argGraph;
 
@@ -1387,17 +1404,36 @@ void lazyExploitShortReadPairs(Graph * argGraph,
 
 	queue = newLazyQueue(nodes);
 
+	if (nodes < LAZY_NODE_FALLBACK)
+		lazyFallback = true;
+
 	for (nodeID = 1; nodeID <= nodes; nodeID++) {
 		node = getNodeInGraph(graph, nodeID);
 
 		if (node == NULL || !getUniqueness(node))
 			continue;
 
-		if (!nodeHasConnections(node))
+		if (!nodeHasPairedConnections(node))
 			continue;
 
-		lazyQueueSchedule(queue, node);
-		lazyQueueSchedule(queue, getTwinNode(node));
+		if (lazyQueueSchedule(queue, node))
+			seedCount++;
+		if (lazyQueueSchedule(queue, getTwinNode(node)))
+			seedCount++;
+	}
+
+	if (!lazyFallback && seedCount < LAZY_SEED_FALLBACK)
+		lazyFallback = true;
+
+	if (lazyFallback) {
+		velvetLog("Lazy frontier too small (%li seeds), running pebble pass instead.\n",
+			  (long) seedCount);
+		destroyLazyQueue(queue);
+		queue = NULL;
+		modified = true;
+		while (modified)
+			modified = expandLongNodes(force_jumps);
+		goto cleanup;
 	}
 
 	while ((scheduledID = lazyQueuePop(queue)) != 0) {
@@ -1412,11 +1448,16 @@ void lazyExploitShortReadPairs(Graph * argGraph,
 			lazyQueueScheduleNeighbours(queue, node);
 	}
 
-	destroyLazyQueue(queue);
+cleanup:
+	if (queue != NULL)
+		destroyLazyQueue(queue);
 	cleanMemory();
 	deactivateLocalCorrectionSettings();
 
 	sortGapMarkers(graph);
 
-	velvetLog("Lazy search done.\n");
+	if (lazyFallback)
+		velvetLog("Pebble done.\n");
+	else
+		velvetLog("Lazy search done.\n");
 }
