@@ -1224,19 +1224,25 @@ static void destroyLazyQueue(LazyQueue *queue)
 	free(queue);
 }
 
+static boolean connectionIsRelevant(Connection *connect)
+{
+	return getConnectionPairedCount(connect) > 0
+	    || getConnectionDirectCount(connect) > 0;
+}
+
 static boolean nodeHasPairedConnections(Node *node)
 {
 	Connection *connect;
 
 	for (connect = getConnection(node); connect != NULL;
 	     connect = getNextConnection(connect)) {
-		if (getConnectionPairedCount(connect) > 0)
+		if (connectionIsRelevant(connect))
 			return true;
 	}
 
 	for (connect = getConnection(getTwinNode(node)); connect != NULL;
 	     connect = getNextConnection(connect)) {
-		if (getConnectionPairedCount(connect) > 0)
+		if (connectionIsRelevant(connect))
 			return true;
 	}
 
@@ -1300,7 +1306,7 @@ static void lazyQueueScheduleNeighbours(LazyQueue *queue, Node *node)
 
 	for (connect = getConnection(node); connect != NULL;
 	     connect = getNextConnection(connect)) {
-		if (getConnectionPairedCount(connect) > 0) {
+		if (connectionIsRelevant(connect)) {
 			lazyQueueSchedule(queue,
 					  getConnectionDestination(connect));
 			lazyQueueSchedule(queue,
@@ -1310,7 +1316,7 @@ static void lazyQueueScheduleNeighbours(LazyQueue *queue, Node *node)
 
 	for (connect = getConnection(getTwinNode(node)); connect != NULL;
 	     connect = getNextConnection(connect)) {
-		if (getConnectionPairedCount(connect) > 0) {
+		if (connectionIsRelevant(connect)) {
 			lazyQueueSchedule(queue,
 					  getConnectionDestination(connect));
 			lazyQueueSchedule(queue,
@@ -1385,6 +1391,7 @@ void lazyExploitShortReadPairs(Graph * argGraph,
 	boolean modified;
 	IDnum seedCount = 0;
 	boolean lazyFallback = false;
+	boolean smallGraph;
 
 	graph = argGraph;
 
@@ -1404,8 +1411,7 @@ void lazyExploitShortReadPairs(Graph * argGraph,
 
 	queue = newLazyQueue(nodes);
 
-	if (nodes < LAZY_NODE_FALLBACK)
-		lazyFallback = true;
+	smallGraph = nodes < LAZY_NODE_FALLBACK;
 
 	for (nodeID = 1; nodeID <= nodes; nodeID++) {
 		node = getNodeInGraph(graph, nodeID);
@@ -1422,7 +1428,7 @@ void lazyExploitShortReadPairs(Graph * argGraph,
 			seedCount++;
 	}
 
-	if (!lazyFallback && seedCount < LAZY_SEED_FALLBACK)
+	if (smallGraph && seedCount < LAZY_SEED_FALLBACK)
 		lazyFallback = true;
 
 	if (lazyFallback) {
@@ -1435,6 +1441,8 @@ void lazyExploitShortReadPairs(Graph * argGraph,
 			modified = expandLongNodes(force_jumps);
 		goto cleanup;
 	}
+	velvetLog("Lazy frontier seeds: %li over %li nodes\n",
+		  (long) seedCount, (long) nodes);
 
 	while ((scheduledID = lazyQueuePop(queue)) != 0) {
 		node = getNodeInGraph(graph, scheduledID);
