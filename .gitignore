@@ -15,3 +15,5 @@ run_*/
 *.o
 velvetg
 velveth
+
+quast_output/
