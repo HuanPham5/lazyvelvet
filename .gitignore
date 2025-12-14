@@ -1,0 +1,17 @@
+# Data
+data/
+*.fastq
+*.fastq.gz
+*.fq
+*.bam
+*.sam
+
+# Outputs
+run_*/
+*.afg
+*.contigs.fa
+
+# Build artifacts
+*.o
+velvetg
+velveth
