@@ -8,7 +8,7 @@ Acknowledgment
 This project is based on the original Velvet genome assembler developed by Daniel Zerbino and Ewan Birney. The original Velvet source code, algorithms, and design form the foundation of this work. All credit for the original implementation and methodology belongs to the original authors. This repository contains experimental modifications for research and educational purposes only.
 
 License and Attribution
-This work retains the original Velvet license. Redistribution and use of this code must comply with the terms of that license. Removing Git history does not remove the obligation to acknowledge the original authors or preserve the license text.
+This work retains the original Velvet license. Redistribution and use of this code must comply with the terms of that license.
 
 Status
 This project is experimental. The lazy traversal implementation is a prototype and has not been validated across extensive datasets.
